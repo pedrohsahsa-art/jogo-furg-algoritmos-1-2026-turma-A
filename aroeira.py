@@ -168,6 +168,42 @@ def _pedir_redesenho(controle):
         controle.update()
 
 
+def _atualizar_ignorando_sessao_morta(controle):
+    """Atualiza um controle, engolindo o erro de janela já fechada.
+
+    Depois de tela.fechar() a sessão do Flet é destruída, e qualquer update
+    levanta
+
+        RuntimeError: An attempt to fetch destroyed session.
+
+    Não dá para prever isso olhando o controle: `controle.page` continua
+    devolvendo a página normalmente (ele só sobe a árvore até achá-la); quem
+    descobre que a sessão morreu é page.update(), lá no fim. Por isso o
+    try/except em volta da chamada, e não uma checagem antes dela.
+
+    Um update que falha depois do fechamento é rotina, não defeito: o aluno
+    mandou fechar, e o desenho que não chegou a aparecer não faz falta. Se
+    a exceção subisse, ela apareceria relatada como erro no programa DELE,
+    apontando para a linha correta de um código correto.
+    """
+    try:
+        controle.update()
+    except Exception:
+        pass
+
+
+def _pilha_da(pagina):
+    """Devolve a ft.Stack de uma página, esteja ela embrulhada ou não.
+
+    Quando o aluno usa ao_soltar_tecla, a pilha vai DENTRO de um
+    ft.KeyboardListener (ver _iniciar), e pagina.controls[0] passa a ser o
+    listener — que tem .content, e não .controls. Quem adiciona ou remove
+    um elemento de interface precisa da pilha de verdade, não do embrulho.
+    """
+    raiz = pagina.controls[0]
+    return raiz.content if isinstance(raiz, ft.KeyboardListener) else raiz
+
+
 # ============================================================
 #  Relato de erros nas funções escritas pelo aluno
 # ============================================================
@@ -1343,11 +1379,11 @@ class Tela:
 
     Exemplo de uso
     --------------
-        from aroeira import Tela, Circulo, Botao
+        from aroeira import Tela, Ponto, Circulo, Botao
 
         tela = Tela("Meu Programa", 800, 600)
 
-        circulo = Circulo(x=200, y=150, raio=60, cor="vermelho")
+        circulo = Circulo(centro=Ponto(200, 150), raio=60, cor="vermelho")
         tela.adicionar(circulo)
 
         def ao_clicar():
@@ -1378,8 +1414,31 @@ class Tela:
         # Função de teclado
         self._funcao_teclado = None
 
+        # Função chamada quando uma tecla é solta (ver ao_soltar_tecla).
+        # Precisa do controle ft.KeyboardListener — page.on_keyboard_event
+        # só entrega key-down, o Flet não expõe key-up por esse caminho.
+        self._funcao_soltar_tecla = None
+
         # Função de clique no canvas
         self._funcao_clique = None
+
+        # Ligada por executar(tela_cheia=True): a janela ocupa o monitor
+        # inteiro, sem barra de título, e a área de desenho CRESCE até o
+        # tamanho real. O desenho NÃO é ampliado: um círculo de raio 25
+        # continua com 25 pixels de verdade. Quem quiser aproveitar o
+        # espaço novo usa tela.largura e tela.altura no lugar de números
+        # fixos — de propósito. Ampliar o desenho por conta própria faria
+        # tela.largura responder 800 com o monitor inteiro à vista, e um
+        # sistema de coordenadas que mente é pior, para quem está
+        # aprendendo, do que um jogo ocupando só um pedaço da tela.
+        self._tela_cheia = False
+
+        # Função chamada a cada movimento do mouse sobre a tela (ver
+        # ao_mover_mouse). O Flet entrega o hover a cada pixel percorrido;
+        # o intervalo abaixo é a válvula que segura a enxurrada. 16 ms deixa
+        # o movimento na mesma cadência do laço de animação (~60 por segundo).
+        self._funcao_mover_mouse = None
+        self._intervalo_mouse_ms = 16
 
         # Função chamada quando o usuário fecha a janela (ver ao_fechar)
         self._funcao_fechar = None
@@ -1430,18 +1489,13 @@ class Tela:
         if isinstance(elemento, _ElementoCanvas):
             elemento._tela = self
             self._elementos_canvas.append(elemento)
-            shapes = [s for e in self._elementos_canvas for s in e._shapes]
-            # Broadcast: propaga a mudança para todos os clientes conectados.
-            # No modo "último cliente ganha" seria: self._canvas.shapes = shapes; self._canvas.update()
-            for canvas in list(self._canvas_list):
-                canvas.shapes = shapes
-                canvas.update()
+            self._redesenhar()
         else:
             self._elementos_ui.append(elemento)
             for pagina in list(self._paginas):
-                pilha = pagina.controls[0]
+                pilha = _pilha_da(pagina)
                 pilha.controls.append(elemento._container)
-                pilha.update()
+                _atualizar_ignorando_sessao_morta(pilha)
 
     # ----------------------------------------------------------
     #  Remover elementos
@@ -1463,18 +1517,14 @@ class Tela:
             if elemento in self._elementos_canvas:
                 self._elementos_canvas.remove(elemento)
                 elemento._tela = None
-                shapes = [s for e in self._elementos_canvas for s in e._shapes]
-                # Broadcast: propaga a remoção para todos os clientes conectados.
-                for canvas in list(self._canvas_list):
-                    canvas.shapes = shapes
-                    canvas.update()
+                self._redesenhar()
         else:
             if elemento in self._elementos_ui:
                 self._elementos_ui.remove(elemento)
                 for pagina in list(self._paginas):
-                    pilha = pagina.controls[0]
+                    pilha = _pilha_da(pagina)
                     pilha.controls.remove(elemento._container)
-                    pilha.update()
+                    _atualizar_ignorando_sessao_morta(pilha)
 
     # ----------------------------------------------------------
     #  Animação por função
@@ -1529,6 +1579,39 @@ class Tela:
         """
         self._funcao_teclado = funcao
 
+    def ao_soltar_tecla(self, funcao):
+        """
+        Define função chamada quando uma tecla é SOLTA.
+
+        A função recebe o nome da tecla como parâmetro (string) — os mesmos
+        nomes de ao_pressionar_tecla.
+
+        Serve para movimento que dura enquanto a tecla está apertada: ao
+        pressionar você liga, ao soltar você desliga.
+
+        Exemplo — a nave só anda enquanto a seta está apertada
+        -----------------------------------------------------
+            def apertou(nome):
+                if nome == "Arrow Left":
+                    nave.dx = -5
+                elif nome == "Arrow Right":
+                    nave.dx = 5
+
+            def soltou(nome):
+                nave.dx = 0
+
+            tela.ao_pressionar_tecla(apertou)
+            tela.ao_soltar_tecla(soltou)
+
+        Atenção ao foco
+        ---------------
+        Usar esta função muda a forma como a Aroeira escuta o teclado: as
+        teclas passam a chegar só quando a área do desenho está com o foco.
+        Se o usuário clicar num Campo de texto, as teclas vão para o campo;
+        basta clicar de volta na área do desenho para voltarem ao jogo.
+        """
+        self._funcao_soltar_tecla = funcao
+
     # ----------------------------------------------------------
     #  Caixa de diálogo
     # ----------------------------------------------------------
@@ -1575,6 +1658,85 @@ class Tela:
             tela.ao_clicar(clicou)
         """
         self._funcao_clique = funcao
+
+    # ----------------------------------------------------------
+    #  Movimento do mouse sobre o canvas
+    # ----------------------------------------------------------
+    def ao_mover_mouse(self, funcao):
+        """
+        Define função chamada quando o mouse se move sobre a tela.
+
+        A função recebe um objeto Ponto com a posição do mouse. Não é preciso
+        apertar botão nenhum: basta o mouse passar por cima da tela.
+
+        Parâmetros
+        ----------
+        funcao : função que recebe um Ponto como parâmetro
+
+        Exemplo — um círculo que persegue o mouse
+        -----------------------------------------
+            circulo = Circulo(centro=Ponto(100, 100), raio=20, cor="vermelho")
+            tela.adicionar(circulo)
+
+            def mexeu(ponto):
+                circulo.centro = ponto
+
+            tela.ao_mover_mouse(mexeu)
+
+        Atenção ao celular
+        ------------------
+        Isto só funciona onde existe mouse. Em tela de toque não existe
+        "passar por cima" — o dedo está tocando ou está longe —, então no
+        celular esta função quase nunca é chamada. Um programa que precise
+        funcionar nos dois lugares deve oferecer também um ao_clicar.
+        """
+        self._funcao_mover_mouse = funcao
+
+    # ----------------------------------------------------------
+    #  Tamanho da tela
+    # ----------------------------------------------------------
+    @property
+    def largura(self):
+        """
+        Largura da área de desenho, em pixels.
+
+        ATENÇÃO — o valor muda de significado no meio do programa:
+
+        ANTES do executar()  : é o número que você passou em Tela(...).
+        DEPOIS do executar() : é o tamanho real da área de desenho. Em
+                               tela cheia, isso é o tamanho do monitor,
+                               que é maior do que o que você pediu.
+
+        Ou seja: as suas funções (a de animação, a de clique, a de tecla)
+        rodam depois e enxergam o tamanho certo. Já o que você escreve no
+        corpo do programa, antes do executar(), enxerga o que você pediu.
+
+            tela = Tela("Jogo", 800, 600)
+
+            # aqui tela.largura vale 800, mesmo indo para tela cheia:
+            tela.adicionar(Botao(Ponto(tela.largura - 120, 10), "Sair", sair))
+
+            def passo():
+                # aqui vale o tamanho real — a bola quica na borda certa
+                if bola.centro.x > tela.largura:
+                    ...
+
+            tela.executar(tela_cheia=True)
+
+        Se um botão aparecer no meio da tela em vez do canto, é isto: ele
+        foi posicionado antes de a janela existir.
+        """
+        return self._largura
+
+    @property
+    def altura(self):
+        """
+        Altura da área de desenho, em pixels.
+
+        Vale a mesma regra da largura: antes do executar() é o que você
+        pediu, depois é o tamanho real. Veja a documentação de largura.
+        """
+        return self._altura
 
     # ----------------------------------------------------------
     #  Fechar a janela
@@ -1709,13 +1871,39 @@ class Tela:
     # ----------------------------------------------------------
     #  Executar
     # ----------------------------------------------------------
-    def executar(self, web=False):
+    def executar(self, web=False, tela_cheia=False):
         """Abre a janela e inicia a aplicação. Deve ser a última chamada.
 
         web : True para rodar no navegador (padrão: False).
               Quando True, exibe no terminal a URL para acesso
               pelo celular (mesma rede WiFi).
+
+        tela_cheia : True para a janela ocupar o monitor inteiro, sem a
+              barra de título (padrão: False). Bom para jogos.
+
+              A área de desenho CRESCE até o tamanho do monitor: o seu
+              desenho não é ampliado, é o espaço que fica maior. Um jogo
+              escrito com números fixos (800, 600) continua funcionando,
+              mas ocupa só um pedaço da tela. Para aproveitar o espaço,
+              use tela.largura e tela.altura dentro das suas funções.
+
+              Lembre de escrever a saída ANTES de testar: sem barra de
+              título não existe X para clicar.
+
+                  def tecla(nome):
+                      if nome == "Escape":
+                          tela.fechar()
+
+                  tela.ao_pressionar_tecla(tecla)
+                  tela.executar(tela_cheia=True)
+
+              No modo web não funciona: quem decide a tela cheia é o
+              navegador, e só a pedido de quem está usando (tecla F11).
         """
+        self._tela_cheia = bool(tela_cheia)
+        if self._tela_cheia and web:
+            print("[Aroeira] tela_cheia=True não vale no modo web: o "
+                  "navegador só entra em tela cheia pela tecla F11.")
         # fechar() antes de executar(): a janela nem chega a abrir. Abrir
         # uma tela já mandada fechar deixaria o aluno com uma janela que
         # não obedece a nada.
@@ -1772,8 +1960,11 @@ class Tela:
         pagina.bgcolor = self._cor_fundo
         pagina.padding = 0
 
-        # Registrar teclado
-        if self._funcao_teclado:
+        # Registrar teclado. Com ao_soltar_tecla em uso, quem entrega as
+        # teclas é o ft.KeyboardListener montado mais abaixo — registrar
+        # também aqui faria a função do aluno ser chamada duas vezes por
+        # tecla pressionada.
+        if self._funcao_teclado and not self._funcao_soltar_tecla:
             pagina.on_keyboard_event = self._tratar_teclado
 
         # Registrar o aviso de fechamento (ver ao_fechar)
@@ -1802,10 +1993,16 @@ class Tela:
         # Empilhar canvas + controles de UI
         controles_ui = [e._container for e in self._elementos_ui]
 
+        # Um único GestureDetector atende clique e movimento do mouse. Cada
+        # tratador só é registrado se o aluno pediu por ele: um GestureDetector
+        # com on_tap_down captura o toque, e não faz sentido interceptá-lo em
+        # um programa que só quer acompanhar o mouse.
         camada_canvas = ft.GestureDetector(
             content=canvas,
-            on_tap_down=self._tratar_clique,
-        ) if self._funcao_clique else canvas
+            on_tap_down=self._tratar_clique if self._funcao_clique else None,
+            on_hover=self._tratar_mover_mouse if self._funcao_mover_mouse else None,
+            hover_interval=self._intervalo_mouse_ms,
+        ) if (self._funcao_clique or self._funcao_mover_mouse) else canvas
 
         pilha = ft.Stack(
             controls=[camada_canvas] + controles_ui,
@@ -1813,8 +2010,32 @@ class Tela:
             height=self._altura,
         )
 
-        pagina.add(pilha)
+        if self._funcao_soltar_tecla:
+            # KeyDownEvent e KeyUpEvent também têm o atributo .key, então os
+            # mesmos tratadores usados no page.on_keyboard_event funcionam
+            # aqui sem alteração.
+            #
+            # autofocus=True é necessário: diferente de page.on_keyboard_event
+            # (que é global), o KeyboardListener só recebe eventos quando está
+            # com o foco de teclado. Se o aluno clicar num Campo de texto, o
+            # foco muda; basta clicar de volta na área do jogo para as teclas
+            # voltarem a funcionar.
+            pagina.add(ft.KeyboardListener(
+                content=pilha,
+                autofocus=True,
+                on_key_down=self._tratar_teclado,
+                on_key_up=self._tratar_soltar_tecla,
+            ))
+        else:
+            pagina.add(pilha)
         pagina.update()
+
+        # Depois do add: a janela precisa ter conteúdo para o Flet medir a
+        # área de desenho e avisar do tamanho novo em on_resize.
+        if self._tela_cheia and not self._web:
+            pagina.window.full_screen = True
+            pagina.on_resize = self._tratar_redimensionamento
+            _atualizar_ignorando_sessao_morta(pagina)
 
         self._pronto.set()
 
@@ -1837,6 +2058,36 @@ class Tela:
     def parar_animacao(self):
         self._segue = False
 
+    # ----------------------------------------------------------
+    #  Tela cheia — o tamanho real chega aqui
+    # ----------------------------------------------------------
+    def _tratar_redimensionamento(self, e: ft.PageResizeEvent):
+        """Chamado pelo Flet quando a área de desenho muda de tamanho.
+
+        É AQUI que tela.largura e tela.altura deixam de ser o que o aluno
+        pediu e passam a ser o tamanho real — e é por isso que o valor
+        difere antes e depois do executar(). Só é registrado em tela
+        cheia: numa janela comum o aluno pode redimensionar com o mouse, e
+        mudar o mundo do jogo debaixo dele a cada arrasto seria pior que
+        deixar o desenho do tamanho pedido.
+        """
+        if not e.width or not e.height:
+            return
+
+        self._largura = int(e.width)
+        self._altura = int(e.height)
+
+        for canvas in list(self._canvas_list):
+            canvas.width = self._largura
+            canvas.height = self._altura
+            _atualizar_ignorando_sessao_morta(canvas)
+
+        for pagina in list(self._paginas):
+            pilha = _pilha_da(pagina)
+            pilha.width = self._largura
+            pilha.height = self._altura
+            _atualizar_ignorando_sessao_morta(pilha)
+
     def _redesenhar(self):
         """Reconstrói a lista de shapes e propaga para todos os clientes.
 
@@ -1848,10 +2099,7 @@ class Tela:
         shapes = [s for e in self._elementos_canvas for s in e._shapes]
         for canvas in list(self._canvas_list):
             canvas.shapes = shapes
-            try:
-                canvas.update()
-            except Exception:
-                pass
+            _atualizar_ignorando_sessao_morta(canvas)
         self._suja = False
 
     # Nos eventos abaixo o erro NÃO interrompe nada: o aluno pode clicar ou
@@ -1868,7 +2116,21 @@ class Tela:
                              "mostrado de novo até você executar o programa outra vez.",
             )
 
-    def _tratar_teclado(self, e: ft.KeyboardEvent):
+    def _tratar_mover_mouse(self, e: ft.HoverEvent):
+        if self._funcao_mover_mouse and e.local_position:
+            _chamar_do_aluno(
+                self._funcao_mover_mouse,
+                (Ponto(int(e.local_position.x), int(e.local_position.y)),),
+                titulo="Houve um erro na sua função de movimento do mouse.",
+                consequencia="O programa continua rodando. Este mesmo erro não será\n"
+                             "mostrado de novo até você executar o programa outra vez.",
+            )
+
+    # Sem anotação de tipo de propósito: recebe tanto ft.KeyboardEvent
+    # (caminho antigo, page.on_keyboard_event, só key-down) quanto
+    # ft.KeyDownEvent (caminho do KeyboardListener, usado quando
+    # ao_soltar_tecla está em uso) — ambos têm .key.
+    def _tratar_teclado(self, e):
         if self._funcao_teclado:
             _chamar_do_aluno(
                 self._funcao_teclado,
@@ -1878,9 +2140,30 @@ class Tela:
                              "mostrado de novo até você executar o programa outra vez.",
             )
 
+    def _tratar_soltar_tecla(self, e: ft.KeyUpEvent):
+        if self._funcao_soltar_tecla:
+            _chamar_do_aluno(
+                self._funcao_soltar_tecla,
+                (e.key,),
+                titulo="Houve um erro na sua função de soltar tecla.",
+                consequencia="O programa continua rodando. Este mesmo erro não será\n"
+                             "mostrado de novo até você executar o programa outra vez.",
+            )
+
     async def _loop_animacao(self):
         while self._segue:
             await asyncio.sleep(self._intervalo_ms / 1000)
+
+            # Reconferir depois da espera, e não só na condição do while.
+            # Durante esses milissegundos o laço de eventos do Flet fica
+            # livre para atender um clique, e esse clique pode ter chamado
+            # fechar() ou parar_animacao(). Sem esta linha o frame seguiria
+            # em frente e chamaria a função do aluno com a janela já
+            # destruída: o erro que aparecia era "An attempt to fetch
+            # destroyed session", relatado como se fosse defeito do
+            # programa dele.
+            if not self._segue:
+                break
 
             # A função do aluno é chamada à parte das operações de desenho.
             # São dois tipos de falha bem diferentes: um erro na função DELE
