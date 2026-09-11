@@ -1,17 +1,16 @@
 import aroeira as ar
 import math as mat
 import random as rd
-
+import configurações 
 #tela
 #(fazer resoluções selecionaveis no menu e linkar aqui)
-tamanho_tela_x = 1400
-tamanho_tela_y = 800
-tela = ar.Tela("pegking", tamanho_tela_x, tamanho_tela_y, "cinza")
+tela_x, tela_y = configurações.config()
+tela = ar.Tela("pegking", tela_x, tela_y, "cinza")
 
 #tentativa do lançador
-corpo = ar.Circulo(ar.Ponto(tamanho_tela_x // 2,0),75,"vermelho")
-inicio_mira = ar.Ponto(tamanho_tela_x // 2,0)
-fim_mira = ar.Ponto(tamanho_tela_x // 2,75)
+corpo = ar.Circulo(ar.Ponto(tela_x // 2,0),75,"vermelho")
+inicio_mira = ar.Ponto(tela_x // 2,0)
+fim_mira = ar.Ponto(tela_x // 2,75)
 mira = ar.Linha(inicio=inicio_mira, fim=fim_mira, cor="preto", espessura=4)
 angulo = mat.atan2(fim_mira.y - inicio_mira.y,fim_mira.x - inicio_mira.x)
 
@@ -52,7 +51,7 @@ def atualizar():
         dx = velocidade_projetil * mat.cos(angulo)
         dy = velocidade_projetil * mat.sin(angulo)
         projetil.mover(dx, dy)
-        saiu_da_tela = (projetil.y > tamanho_tela_y or projetil.y < 0 or projetil.x > tamanho_tela_x or projetil.x < 0)
+        saiu_da_tela = (projetil.y > tela_y or projetil.y < 0 or projetil.x > tela_x or projetil.x < 0)
         if saiu_da_tela:
             tela.remover(projetil)
             projeteis.remove(projetil)
@@ -64,4 +63,4 @@ tela.adicionar(corpo)
 tela.adicionar(mira)
 tela.ao_clicar(tiro)
 tela.animar(atualizar, fps=60)
-tela.executar()
+tela.executar(tela_cheia=True)
