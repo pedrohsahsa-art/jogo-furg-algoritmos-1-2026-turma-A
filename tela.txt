@@ -1,2 +1,2 @@
-tela_x = 1600
-tela_y = 900
+tela_x = 1920
+tela_y = 1080

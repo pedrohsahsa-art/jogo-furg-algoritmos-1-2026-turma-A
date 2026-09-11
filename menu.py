@@ -1,14 +1,8 @@
 import aroeira
-with open("tela.txt", "r", encoding="utf-8") as arquivo:
-    configuracoes = {}
+import configurações
 
-    for linha in arquivo:
-        chave, valor = linha.strip().split("=")
-        configuracoes[chave.strip()] = int(valor.strip())
+tela_x, tela_y = configurações.config()
 
-tela_x = configuracoes["tela_x"]
-tela_y = configuracoes["tela_y"]
-    
 botão_largura = 300
 
 
@@ -21,6 +15,7 @@ def clicar(ponto):
     if (opcao_hitbox(ponto, placeholder_botão) or opcao_hitbox(ponto, placeholder_botão2)):
         tela.remover(placeholder_botão)
         tela.remover(placeholder_botão2)
+        tela.fechar("Teste")
     
 
 
@@ -28,7 +23,7 @@ tela = aroeira.Tela("PEEGLE", altura=tela_y, largura=tela_x)
 placeholder_botão = aroeira.Retangulo(origem=(aroeira.Ponto(((tela_x/2)-(botão_largura/2)),tela_y/2)),largura=botão_largura, cor="azul")
 placeholder_botão2 = aroeira.Retangulo(origem=(aroeira.Ponto(((tela_x/2)-(botão_largura/2)),(tela_y/2+botão_largura/2))),largura=botão_largura, cor="azul")
 
-placeholder_background = aroeira.Retangulo(origem=(aroeira.Ponto(00,00)),largura=1920,altura=1080)
+placeholder_background = aroeira.Retangulo(origem=(aroeira.Ponto(00,00)),largura=tela_x,altura=tela_y)
 
 tela.adicionar(placeholder_background)
 tela.adicionar(placeholder_botão)
@@ -38,4 +33,4 @@ tela.ao_clicar(clicar)
 
 
 
-tela.executar()
+tela.executar(tela_cheia=True)
