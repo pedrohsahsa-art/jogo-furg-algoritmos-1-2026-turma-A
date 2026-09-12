@@ -36,7 +36,7 @@ bota2 = aroeira.Imagem(caminho=botao_path2,origem=(aroeira.Ponto(((tela_x/2)-(bo
 bota3 = aroeira.Imagem(caminho=botao_path3,origem=(aroeira.Ponto(((tela_x/2)-(botao_altura)),((tela_y/2+botao_altura*2)))), altura= botao_altura, largura= botao_largura,)
 placeholder_botão = aroeira.Retangulo(origem=(aroeira.Ponto(((tela_x/2)-(botao_altura)),tela_y/2)),altura=botao_altura,largura=botao_largura, cor="azul")
 placeholder_botão2 = aroeira.Retangulo(origem=(aroeira.Ponto(((tela_x/2)-(botao_altura)),(tela_y/2+botao_altura))),altura=botao_altura,largura=botao_largura, cor="azul")
-placeholder_botão3 = aroeira.Retangulo(origem=(aroeira.Ponto(((tela_x/2)-(botao_altura)),((tela_y/2+botao_altura*2cd "E:\faculdade\PYT\PASTA10\jogo-furg-algoritmos-1-2026-turma-A")))),altura=botao_altura,largura=botao_largura, cor="azul")
+placeholder_botão3 = aroeira.Retangulo(origem=(aroeira.Ponto(((tela_x/2)-(botao_altura)),((tela_y/2+botao_altura*2)))),altura=botao_altura,largura=botao_largura, cor="azul")
 placeholder_background = aroeira.Retangulo(origem=(aroeira.Ponto(00,00)),largura=tela_x,altura=tela_y)
 
 tela.adicionar(placeholder_background)
@@ -48,4 +48,4 @@ tela.ao_clicar(clicar)
 tela.ao_mover_mouse(placeholder_)
 tela.animar(placeholder_a, fps=60)
 
-tela.executar(tela_cheia=False)
+tela.executar(tela_cheia=True)
