@@ -1,5 +1,9 @@
+import os
+
 def config():
-    with open("tela.txt", "r", encoding="utf-8") as arquivo:
+    diretorio = os.path.dirname(os.path.abspath(__file__))
+    caminho_tela = os.path.join(diretorio, "tela.txt")
+    with open(caminho_tela, "r") as arquivo:
         configuracoes = {}
 
         for linha in arquivo:
