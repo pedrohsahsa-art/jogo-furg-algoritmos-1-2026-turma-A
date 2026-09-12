@@ -5,7 +5,7 @@ def jogar(tela):
     import configurações 
     #tela
     #(fazer resoluções selecionaveis no menu e linkar aqui)
-    tela_x, tela_y = configurações.config()
+    tela_x,tela_y,a,b,c= configurações.config()
     
     #tentativa do lançador
     corpo = ar.Circulo(ar.Ponto(tela_x // 2,0),75,"vermelho")
